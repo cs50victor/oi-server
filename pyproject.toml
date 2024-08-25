@@ -1,0 +1,14 @@
+[project]
+name = "oi-server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "open-interpreter[os]>=0.3.8",
+    "supabase==2.5.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
