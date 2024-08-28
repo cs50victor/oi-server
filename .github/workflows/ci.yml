@@ -1,5 +1,12 @@
 name: CI
 
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+  workflow_dispatch:
+
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
 
