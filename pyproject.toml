@@ -1,14 +1,38 @@
 [project]
 name = "oi-server"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.0.1"
+description = "Open Interpreter Local Server"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
-    "open-interpreter[os]>=0.3.8",
-    "supabase==2.5.3",
+    "open-interpreter>=0.3.8",
+    "fastapi>=0.112.2",
+    "logging",
+    "uvicorn>=0.30.6",
+    "uvloop>=0.20.0",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# [tool.pyright]
+# venvPath = "."
+# venv = ".venv"

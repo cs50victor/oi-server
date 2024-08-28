@@ -1,6 +1,11 @@
 # Python tmp files
 __pycache__
 
+# Virtualenv
+.venv
 
+# other
 .env
 
+# lint
+.ruff_cache
