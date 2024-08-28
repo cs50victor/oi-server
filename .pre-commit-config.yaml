@@ -10,13 +10,14 @@ repos:
       - id: check-added-large-files
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-  # Ruff version.
+    # ruff version.
     rev: v0.6.2
     hooks:
-    # Run the linter.
-      - id: ruff
-        types_or: [ python, pyi ]
-        args: [ --fix ]
-        # Run the formatter.
+        # run formatter
       - id: ruff-format
         types_or: [ python, pyi ]
+        # Run the linter.
+      - id: ruff
+        types_or: [ python, pyi ]
+        args: [ --fix, --exit-non-zero-on-fix ]
+        require_serial: true

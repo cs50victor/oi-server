@@ -23,9 +23,11 @@ if sys.platform != "win32":
 
         asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     except ImportError:
-        print("uvloop does not support Windows at the moment. falling back to default asyncio event loop.")
         # uvloop is not installed, fall back to the default event loop
         pass
+else:
+    print("uvloop does not support Windows at the moment. falling back to default asyncio event loop.")
+
 
 # FOR READER: file class structure for easy skimming
 # also cool read / side not: - python threading side note: https://stackoverflow.com/questions/11431637/how-can-i-kill-a-thread-in-python
