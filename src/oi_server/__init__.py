@@ -1,15 +1,11 @@
-# import sys
-# if sys.version_info < (3, 12):
-# else:
-#     from typing import TypedDict
-
 # https://docs.pydantic.dev/2.8/errors/usage_errors/#typed-dict-version
 from typing_extensions import TypedDict
 from typing import Any, Callable, Optional, Union, Dict, List, Literal
 from fastapi import FastAPI, APIRouter, Depends, Request, HTTPException, UploadFile, File, Form, WebSocket, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, ValidationInfo
 from fastapi.responses import FileResponse
 from interpreter import OpenInterpreter  # type: ignore
+from starlette.websockets import WebSocketState
 from datetime import datetime
 import shutil
 import socket
@@ -25,7 +21,7 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 # FOR READER: file class structure for easy skimming
 # also cool read / side not: - python threading side note: https://stackoverflow.com/questions/11431637/how-can-i-kill-a-thread-in-python
 # - imports
-# - Pydanctic Structs for LMC, Ping, etc
+# - Pydanctic Structs for LMC, ClientMsg, and other json to model stuff
 # - AsnycInterpreter
 # - OISever
 # - ServerRoutes
@@ -35,10 +31,6 @@ asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 class RunCode(TypedDict):
     language: str
     code: str
-
-
-class Ping(BaseModel):
-    type: Literal["ping"]
 
 
 class LMC(BaseModel):
@@ -62,10 +54,17 @@ class LMC(BaseModel):
             "wav",
         ]
     ] = None
-    content: Optional[str]
+    content: Optional[str] = None
     run_code: Optional[RunCode] = None
     start: Optional[bool] = None
     end: Optional[bool] = None
+
+    @field_validator("content")
+    @classmethod
+    def ensure_content_when_not_status(cls, v: Optional[str], info: ValidationInfo):
+        if info.data.get("type") != "status" and v is None:
+            raise ValueError("Content is required for non 'status' LMC messages")
+        return v
 
     @field_validator("start")
     def start_must_be_true(cls, start: bool):
@@ -98,47 +97,20 @@ class ChatCompletionRequest(BaseModel):
 
 
 class ClientMsg(BaseModel):
-    inner: Union[LMC, Ping, bytes]
-
-    @field_validator("inner")
-    def validate_server_msg(cls, inner: Any) -> Union[LMC, Ping, bytes]:
-        if isinstance(inner, bytes):
-            return inner
-
-        if isinstance(inner, str):
-            try:
-                inner_dict = json.loads(inner)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON message: {inner} | {e}")
-        elif isinstance(inner, dict):
-            inner_dict: Dict[str, Any] = inner
-        else:
-            raise ValueError(f"Invalid websocket message type: {type(inner)}")
-
-        if "type" not in inner_dict:
-            raise ValueError("Message missing 'type' field")
-
-        try:
-            if inner_dict["type"] == "ping":
-                return Ping(**inner_dict)
-            elif inner_dict["type"] in ["message", "console", "image", "code", "audio"]:
-                return LMC(**inner_dict)
-            else:
-                raise ValueError(f"Unknown message type: {inner_dict['type']}")
-        except Exception as e:
-            raise ValueError(f"Error creating object: {e}")
+    inner: Union[LMC, bytes]
 
     def is_lcm(self) -> bool:
         return isinstance(self.inner, LMC)
-
-    def is_ping(self) -> bool:
-        return isinstance(self.inner, Ping)
 
     def is_bytes(self) -> bool:
         return isinstance(self.inner, bytes)
 
 
 class ServerInterpreter(OpenInterpreter):
+    # TODO: connected to the core, need to figure out how to type this
+    llm: Any  # Replace 'Any' with the actual type of llm
+    computer: Any  # Replace 'Any' with the actual type of computer
+
     def __init__(self, *args, **kwargs):  # type: ignore
         super().__init__(*args, **kwargs)  # type: ignore
         self.messages: List[LMC]
@@ -161,9 +133,7 @@ class ServerInterpreter(OpenInterpreter):
         return LMC(role="server", type="status", content="complete")
 
     def accumulate(self, message: ClientMsg):
-        if not isinstance(message.inner, (bytes, LMC)):
-            raise ValueError(f"Invalid message type: {type(message.inner)}")
-        if message.is_bytes():
+        if isinstance(message.inner, bytes):
             if not self.messages:
                 raise ValueError("Cannot accumulate bytes message when messages list is empty")
             # We initialize as an empty string ^
@@ -172,8 +142,6 @@ class ServerInterpreter(OpenInterpreter):
                 self.messages[-1]["content"] = b""  # type: ignore
             self.messages[-1]["content"] += message.inner  # type: ignore
             return
-
-        assert isinstance(message.inner, LMC)  # This just helps type checking since lsp doesn't pick up is_bytes()
 
         if message.inner.content == "active_line":
             return
@@ -209,7 +177,7 @@ class OIServer:
     app: FastAPI
     config: uvicorn.Config
     uvicorn_server: uvicorn.Server
-    authenticate: Callable[[str], bool]
+    authenticate: Callable[[str | None], bool]
 
     DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 8000
@@ -218,14 +186,17 @@ class OIServer:
         # logging setup
         self.log_level = logging.INFO
         logging.basicConfig(
-            level=self.log_level, format="%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+            level=self.log_level,
+            format="%(levelname)s: %(message)s",
         )
         self.logger = logging.getLogger(__name__)
 
         # fast api setup
         # "dependencies are the preferred way to create a middleware for authentication"
         # see https://stackoverflow.com/questions/66632841/fastapi-dependency-vs-middleware
+        self.connection_auth = self.default_connection_auth
         self.app = FastAPI(dependencies=[Depends(self.http_auth_middleware())])
+        self.app = FastAPI()
         self.app.include_router(
             ServerRoutes(server_interpreter=server_interpreter, logger=self.logger).router,
             # for fun
@@ -252,7 +223,6 @@ class OIServer:
             ws_ping_interval=_ws_ping_interval_in_secs,
             log_level=self.log_level,
         )
-        self.connection_auth = self.default_connection_auth
 
     @property
     def host(self):
@@ -411,31 +381,38 @@ class ServerRoutes:
 
     async def ws_endpoint(self, websocket: WebSocket):
         await websocket.accept()
+        self.logger.info("WebSocket connection opened / accepted")
         msg_queue: asyncio.Queue[ClientMsg] = asyncio.Queue()
 
         async def receive_msg_from_client():
-            try:
-                msg = await websocket.receive()
-                self.logger.info(f"received message from client: {msg}")
-                # validate msg
-                # if invalid, log and send error msg to client, else put
+            while websocket.client_state == WebSocketState.CONNECTED:
                 try:
-                    client_msg = ClientMsg(**msg)
-                    if client_msg.is_ping():
-                        return await websocket.send_json({"type": "Pong"})
-                    msg_queue.put_nowait(client_msg)
+                    async for ws_msg in websocket.iter_json():
+                        self.logger.info(f"received message from client: {ws_msg}")
+                        try:
+                            # validate msg
+                            # if invalid, log and send error msg to client, else put
+                            if ws_msg.get("type") == "ping":
+                                await websocket.send_json({"type": "pong"})
+                                continue
+                            inner_msg = LMC(**ws_msg)
+                            client_msg = ClientMsg(inner=inner_msg)
+                            msg_queue.put_nowait(client_msg)
+                        except Exception as e:
+                            err_msg = f"Invalid websocket message: {ws_msg} | {e}"
+                            self.logger.error(err_msg)
+                            await websocket.send_json(
+                                LMC(role="server", type="error", content=err_msg).model_dump(exclude_none=True)
+                            )
                 except Exception as e:
-                    err_msg = f"Error validating websocket message: {msg} | {e}"
-                    self.logger.error(err_msg)
-            except Exception as e:
-                self.logger.warning(f"Client disconnected from websocket or other error occured | {e}")
+                    self.logger.warning(f"Client disconnected from websocket or other error occured | {e}")
 
         async def send_response_to_client():
-            while True:
+            while websocket.client_state == WebSocketState.CONNECTED:
                 try:
                     output = await self.server_interpreter.output()
                     if isinstance(output, LMC):
-                        await websocket.send_text(json.dumps(output))
+                        await websocket.send_json(output.model_dump(exclude_none=True))
                     else:
                         await websocket.send_bytes(output)
                 except Exception as e:
@@ -456,11 +433,9 @@ class ServerRoutes:
 
         def client_msg_to_task(client_msg: ClientMsg) -> asyncio.Task[None] | None:
             # for each message we either accumulate or starting responding
-            if isinstance(client_msg.inner, bytes) or (
-                isinstance(client_msg.inner, LMC) and client_msg.inner.end is not True
-            ):
+            if isinstance(client_msg.inner, bytes) or (client_msg.inner.end is not True):
                 self.server_interpreter.accumulate(client_msg)
-            elif isinstance(client_msg.inner, LMC):
+            else:
                 lmc_msg = client_msg.inner
                 if lmc_msg.run_code:
                     # non-async long running code
@@ -477,7 +452,7 @@ class ServerRoutes:
         async def process_client_msg():
             client_msg = await msg_queue.get()
             self.interpreter_task = client_msg_to_task(client_msg)
-            while True:
+            while websocket.client_state == WebSocketState.CONNECTED:
                 client_msg = await msg_queue.get()
                 if self.interpreter_task and not self.interpreter_task.done():
                     self.interpreter_task.cancel()

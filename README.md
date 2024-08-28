@@ -2,4 +2,5 @@
 
 
 - `brew install uv`
--`uv run src/oi_server/__init__.py`
+- `uv run examples/basic.py`
+- `uv run pytest tests -q`
