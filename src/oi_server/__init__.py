@@ -1,3 +1,5 @@
+import sys
+
 # https://docs.pydantic.dev/2.8/errors/usage_errors/#typed-dict-version
 from typing_extensions import TypedDict
 from typing import Any, Callable, Optional, Union, Dict, List, Literal
@@ -14,9 +16,16 @@ import json
 import os
 import uvicorn
 import asyncio
-import uvloop  # uvloop makes asyncio 2-4x faster.
 
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+if sys.platform != "win32":
+    try:
+        import uvloop  # uvloop makes asyncio 2-4x faster.
+
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    except ImportError:
+        print("uvloop does not support Windows at the moment. falling back to default asyncio event loop.")
+        # uvloop is not installed, fall back to the default event loop
+        pass
 
 # FOR READER: file class structure for easy skimming
 # also cool read / side not: - python threading side note: https://stackoverflow.com/questions/11431637/how-can-i-kill-a-thread-in-python

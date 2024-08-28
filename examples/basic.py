@@ -12,7 +12,6 @@ if __name__ == "__main__":
     os.environ["INTERPRETER_REQUIRE_ACKNOWLEDGE"] = "True"
     async_interpreter = ServerInterpreter()
     async_interpreter.llm.api_base = "https://api.openinterpreter.com/v0/"
-    async_interpreter.llm.api_key = "secret-dapp-key"
     async_interpreter.computer.save_skills = False
     async_interpreter.computer.import_computer_api = True
 
