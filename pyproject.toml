@@ -21,6 +21,7 @@ build-backend = "hatchling.build"
 dev-dependencies = [
     "ruff",
     "pytest>=8.3.2",
+    "pre-commit>=3.8.0",
 ]
 
 [tool.ruff]
