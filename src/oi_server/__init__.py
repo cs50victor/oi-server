@@ -78,9 +78,6 @@ class LMC(BaseModel):
             raise ValueError("end must be true in LCM message")
         return end
 
-    def is_server_complete_msg(self) -> bool:
-        return self.role == "server" and self.type == "status" and self.content == "complete"
-
 
 ### FOR OPENAI COMPATIBLE ENDPOINT
 class ChatMessage(BaseModel):
