@@ -1,4 +1,4 @@
-name: CI 
+name: CI
 
 env:
   UV_CACHE_DIR: /tmp/.uv-cache
@@ -6,7 +6,7 @@ env:
 jobs:
   checks-and-tests:
     name: python-${{ matrix.os }}
-    
+
     strategy:
       matrix:
         os:
@@ -44,13 +44,13 @@ jobs:
             uv-${{ runner.os }}
 
       - name: uv check
-        run: uv tools run ruff check 
+        run: uv tools run ruff check
 
       - name: uv fmt
         run: uv tools run ruff format
 
-      - name: run tests 
+      - name: run tests
         run: uv run pytest tests
 
-      - name: minimize uv cache 
+      - name: minimize uv cache
         run: uv cache prune --ci
