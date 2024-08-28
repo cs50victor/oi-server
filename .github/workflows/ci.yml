@@ -51,10 +51,10 @@ jobs:
             uv-${{ runner.os }}
 
       - name: uv check
-        run: uv tools run ruff check
+        run: uv tool run ruff check
 
       - name: uv fmt
-        run: uv tools run ruff format
+        run: uv tool run ruff format
 
       - name: run tests
         run: uv run pytest tests
