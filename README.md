@@ -1,5 +1,6 @@
 # Run server
 
-
-- `brew install uv`
--`uv run src/oi_server/__init__.py`
+- `brew install uv pre-commit`
+- `pre-commit install`
+- `uv run examples/basic.py`
+- `uv run pytest tests -q`

@@ -8,10 +8,14 @@ requires-python = ">=3.11"
 dependencies = [
     "open-interpreter>=0.3.8",
     "fastapi>=0.112.2",
-    "logging",
     "uvicorn>=0.30.6",
     "uvloop>=0.20.0",
     "websockets<13.0",
+]
+
+[project.optional-dependencies]
+unix = [
+    "uvloop>=0.20.0",
 ]
 
 [build-system]
@@ -21,6 +25,8 @@ build-backend = "hatchling.build"
 [tool.uv]
 dev-dependencies = [
     "ruff",
+    "pytest>=8.3.2",
+    "pre-commit>=3.8.0",
 ]
 
 [tool.ruff]

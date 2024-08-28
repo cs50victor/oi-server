@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  checks-and-tests:
+    name: python-${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+      fail-fast: false
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: get source
+        uses: actions/checkout@v4
+
+      - name: set up uv on unix
+        if: ${{ matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest' }}
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: set up uv on windows
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: irm https://astral.sh/uv/install.ps1 | iex
+        shell: powershell
+
+      - name: setup python 3.11
+        run: uv python install 3.11
+
+      - name: restore uv cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.uv-cache
+          key: uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+            uv-${{ runner.os }}
+
+      - name: uv check
+        run: uv tool run ruff check
+
+      - name: uv fmt
+        run: uv tool run ruff format
+
+      - name: run tests
+        run: uv run pytest tests
+
+      - name: minimize uv cache
+        run: uv cache prune --ci
