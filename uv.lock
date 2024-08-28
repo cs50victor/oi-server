@@ -1322,8 +1322,12 @@ dependencies = [
     { name = "fastapi" },
     { name = "open-interpreter" },
     { name = "uvicorn" },
-    { name = "uvloop" },
     { name = "websockets" },
+]
+
+[package.optional-dependencies]
+unix = [
+    { name = "uvloop" },
 ]
 
 [package.dev-dependencies]
@@ -1338,7 +1342,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.112.2" },
     { name = "open-interpreter", specifier = ">=0.3.8" },
     { name = "uvicorn", specifier = ">=0.30.6" },
-    { name = "uvloop", specifier = ">=0.20.0" },
+    { name = "uvloop", marker = "extra == 'unix'", specifier = ">=0.20.0" },
     { name = "websockets", specifier = "<13.0" },
 ]
 
