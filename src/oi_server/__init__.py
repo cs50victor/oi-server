@@ -1,5 +1,12 @@
-# add better typing to interpreter core message array
-from typing import Any, Callable, Literal, Optional, Union, Dict, List, TypedDict
+import sys
+
+# https://docs.pydantic.dev/2.8/errors/usage_errors/#typed-dict-version
+if sys.version_info < (3, 12):
+    from typing_extensions import TypedDict
+else:
+    from typing import TypedDict
+
+from typing import Any, Callable, Optional, Union, Dict, List, Literal
 from fastapi import FastAPI, APIRouter, Depends, Request, HTTPException, UploadFile, File, Form, WebSocket, status
 from pydantic import BaseModel, field_validator
 from fastapi.responses import FileResponse
@@ -11,31 +18,28 @@ import logging
 import json
 import os
 import uvicorn
-
-# uvloop makes asyncio 2-4x faster.
 import asyncio
-import uvloop
+import uvloop  # uvloop makes asyncio 2-4x faster.
 
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
-# That including uvloop, the high-performance drop-in replacement for asyncio, that provides the big concurrency performance boost.
-# python threading side note: https://stackoverflow.com/questions/11431637/how-can-i-kill-a-thread-in-python
-
-
 # FOR READER: file class structure for easy skimming
+# also cool read / side not: - python threading side note: https://stackoverflow.com/questions/11431637/how-can-i-kill-a-thread-in-python
+# - imports
 # - Pydanctic Structs for LMC, Ping, etc
 # - AsnycInterpreter
 # - OISever
 # - ServerRoutes
-
-
-class Ping(BaseModel):
-    type: Literal["ping"]
+# TODO: maybe add better typing to interpreter core message array
 
 
 class RunCode(TypedDict):
     language: str
     code: str
+
+
+class Ping(BaseModel):
+    type: Literal["ping"]
 
 
 class LMC(BaseModel):
