@@ -1,5 +1,5 @@
 [project]
-name = "oi-server"
+name = "oi_server"
 version = "0.0.1"
 description = "Open Interpreter Local Server"
 readme = "README.md"
