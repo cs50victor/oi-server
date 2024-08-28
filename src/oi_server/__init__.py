@@ -1,11 +1,10 @@
-import sys
+# import sys
+# if sys.version_info < (3, 12):
+# else:
+#     from typing import TypedDict
 
 # https://docs.pydantic.dev/2.8/errors/usage_errors/#typed-dict-version
-if sys.version_info < (3, 12):
-    from typing_extensions import TypedDict
-else:
-    from typing import TypedDict
-
+from typing_extensions import TypedDict
 from typing import Any, Callable, Optional, Union, Dict, List, Literal
 from fastapi import FastAPI, APIRouter, Depends, Request, HTTPException, UploadFile, File, Form, WebSocket, status
 from pydantic import BaseModel, field_validator
