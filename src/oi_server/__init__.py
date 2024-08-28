@@ -205,7 +205,7 @@ class ServerInterpreter(OpenInterpreter):
                 last_msg.content += message.inner.content
 
 
-class OISever:
+class OIServer:
     app: FastAPI
     config: uvicorn.Config
     uvicorn_server: uvicorn.Server
@@ -233,8 +233,8 @@ class OISever:
         )
 
         # server config setup
-        host = os.getenv("HOST", OISever.DEFAULT_HOST)
-        port = int(os.getenv("PORT", OISever.DEFAULT_PORT))
+        host = os.getenv("HOST", OIServer.DEFAULT_HOST)
+        port = int(os.getenv("PORT", OIServer.DEFAULT_PORT))
 
         # TODO: optimize later
         # 1080 minutes / 18 hours
