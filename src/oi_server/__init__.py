@@ -1,5 +1,3 @@
-import sys
-
 # https://docs.pydantic.dev/2.8/errors/usage_errors/#typed-dict-version
 from typing_extensions import TypedDict
 from typing import Any, Callable, Optional, Union, Dict, List, Literal
@@ -16,17 +14,6 @@ import json
 import os
 import uvicorn
 import asyncio
-
-if sys.platform != "win32":
-    try:
-        import uvloop  # uvloop makes asyncio 2-4x faster.
-
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    except ImportError:
-        # uvloop is not installed, fall back to the default event loop
-        pass
-else:
-    print("uvloop does not support Windows at the moment. falling back to default asyncio event loop.")
 
 
 # FOR READER: file class structure for easy skimming
@@ -319,6 +306,7 @@ class ServerRoutes:
         # routes setup
         self.router.add_api_route("/", self.home, methods=["GET"])
         self.router.add_api_websocket_route("/ws", self.ws_endpoint)
+        self.router.add_api_websocket_route("/ws/{path:path}", self.ws_endpoint)
         self.router.add_api_route("/heartbeat", self.heartbeat, methods=["GET"])
         self.router.add_api_route("/settings", self.set_settings, methods=["POST"])
         self.router.add_api_route("/settings/{setting}", self.get_setting, methods=["GET"])
