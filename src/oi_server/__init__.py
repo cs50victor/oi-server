@@ -1,7 +1,7 @@
 # https://docs.pydantic.dev/2.8/errors/usage_errors/#typed-dict-version
 from typing_extensions import TypedDict
-from typing import Any, Callable, Optional, Union, Dict, List, Literal
-from fastapi import FastAPI, APIRouter, Depends, Request, HTTPException, UploadFile, File, Form, WebSocket, status
+from typing import Any, Callable, Optional, Union, Dict, List, Literal, Coroutine, Annotated
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, WebSocket, Header, status
 from pydantic import BaseModel, field_validator, ValidationInfo
 from fastapi.responses import FileResponse
 from interpreter import OpenInterpreter  # type: ignore
@@ -173,6 +173,7 @@ class OIServer:
     config: uvicorn.Config
     uvicorn_server: uvicorn.Server
     authenticate: Callable[[str | None], bool]
+    interpreter: ServerInterpreter
 
     DEFAULT_HOST = "127.0.0.1"
     DEFAULT_PORT = 8000
@@ -187,17 +188,9 @@ class OIServer:
         self.logger = logging.getLogger(__name__)
 
         # fast api setup
-        # "dependencies are the preferred way to create a middleware for authentication"
-        # see https://stackoverflow.com/questions/66632841/fastapi-dependency-vs-middleware
-        self.connection_auth = self.default_connection_auth
-        self.app = FastAPI(dependencies=[Depends(self.http_auth_middleware())])
         self.app = FastAPI()
-        self.app.include_router(
-            ServerRoutes(server_interpreter=server_interpreter, logger=self.logger).router,
-            # for fun
-            responses={418: {"description": "I'm a teapot"}},
-        )
-
+        self.interpreter = server_interpreter
+        self.connection_auth = self.default_connection_auth
         # server config setup
         host = os.getenv("HOST", OIServer.DEFAULT_HOST)
         port = int(os.getenv("PORT", OIServer.DEFAULT_PORT))
@@ -259,25 +252,33 @@ class OIServer:
     #  ------- ws config end -------
 
     # TODO: clean up or think about it harder later
-    def default_connection_auth(self, key: str | None) -> bool:
+    async def default_connection_auth(self, jwt: str | None) -> bool:
         ws_api_key = os.getenv("INTERPRETER_API_KEY")
         #  ws_api_key is None ??
-        return ws_api_key is None or (key is not None and ws_api_key == key)
+        return ws_api_key is None or (jwt is not None and ws_api_key == jwt)
 
     def http_auth_middleware(self):
-        async def _http_auth_middleware(request: Request):
-            api_key = request.headers.get("X-API-KEY")
-            if request.url.path == "/heartbeat" or not self.connection_auth(api_key):
-                return
-
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Http Middleware Authentication failed. X-API-KEY is invalid.",
-            )
+        async def _http_auth_middleware(x_api_key: Annotated[str | None, Header()]):
+            if not await self.connection_auth(x_api_key):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Http Middleware Authentication failed. X-API-KEY is invalid.",
+                )
 
         return _http_auth_middleware
 
     def run(self):
+        # "dependencies are the preferred way to create a middleware for authentication"
+        # see https://stackoverflow.com/questions/66632841/fastapi-dependency-vs-middleware
+        routers = ServerRoutes(
+            server_interpreter=self.interpreter,
+            logger=self.logger,
+            http_auth_middleware=self.http_auth_middleware(),
+            core_auth=self.connection_auth,
+        ).routers
+        for router in routers:
+            self.app.include_router(router)
+
         uvicorn_server = uvicorn.Server(self.config)
 
         # for more info : https://stackoverflow.com/questions/20778771/what-is-the-difference-between-0-0-0-0-127-0-0-1-and-localhost
@@ -298,24 +299,34 @@ class OIServer:
 
 
 class ServerRoutes:
-    def __init__(self, logger: logging.Logger, server_interpreter: ServerInterpreter):
+    def __init__(
+        self,
+        logger: logging.Logger,
+        server_interpreter: ServerInterpreter,
+        http_auth_middleware: Callable[[str], Coroutine[Any, Any, None]],
+        core_auth: Callable[[str | None], Coroutine[Any, Any, bool]],
+    ):
         self.logger = logger
-        self.router = APIRouter()
+        self.core_connection_auth = core_auth
+        self.auth_routes = APIRouter(dependencies=[Depends(http_auth_middleware)], tags=["auth routes"])
+        self.no_auth_routes = APIRouter()
         self.interpreter_task: asyncio.Task[Any] | None = None
         self.server_interpreter = server_interpreter
         # routes setup
-        self.router.add_api_route("/", self.home, methods=["GET"])
-        self.router.add_api_websocket_route("/ws", self.ws_endpoint)
-        self.router.add_api_websocket_route("/ws/{path:path}", self.ws_endpoint)
-        self.router.add_api_route("/heartbeat", self.heartbeat, methods=["GET"])
-        self.router.add_api_route("/settings", self.set_settings, methods=["POST"])
-        self.router.add_api_route("/settings/{setting}", self.get_setting, methods=["GET"])
+        self.no_auth_routes.add_api_route("/", self.home, methods=["GET"])
+        self.auth_routes.add_api_websocket_route("/ws", self.ws_endpoint)
+        self.no_auth_routes.add_api_websocket_route("/ws/web", self.ws_endpoint)
+        self.no_auth_routes.add_api_route("/heartbeat", self.heartbeat, methods=["GET"])
+        self.auth_routes.add_api_route("/settings", self.set_settings, methods=["POST"])
+        self.auth_routes.add_api_route("/settings/{setting}", self.get_setting, methods=["GET"])
         # TODO
         # self.router.add_api_route("/openai/chat/completions", self.chat_completion, methods=["POST"])
         if os.getenv("INTERPRETER_INSECURE_ROUTES", "").lower() == "true":
-            self.router.add_api_route("/run", self.run_code, methods=["POST"])
-            self.router.add_api_route("/upload", self.upload_file, methods=["POST"])
-            self.router.add_api_route("/download/{filename}", self.download_file, methods=["GET"])
+            self.auth_routes.add_api_route("/run", self.run_code, methods=["POST"])
+            self.auth_routes.add_api_route("/upload", self.upload_file, methods=["POST"])
+            self.auth_routes.add_api_route("/download/{filename}", self.download_file, methods=["GET"])
+
+        self.routers = [self.auth_routes, self.no_auth_routes]
 
     async def home(self):
         return {"message": "Open Interpreter Local Server"}
@@ -376,16 +387,29 @@ class ServerRoutes:
         return {"status": "success"}
 
     async def ws_endpoint(self, websocket: WebSocket):
+        is_browser_connection = websocket.url.path.endswith("/web")
         await websocket.accept()
         self.logger.info("WebSocket connection opened / accepted")
         msg_queue: asyncio.Queue[ClientMsg] = asyncio.Queue()
 
         async def receive_msg_from_client():
+            browser_connection_authenticated = False
             while websocket.client_state == WebSocketState.CONNECTED:
                 try:
                     async for ws_msg in websocket.iter_json():
                         self.logger.info(f"received message from client: {ws_msg}")
                         try:
+                            # first message after connection for browser clients should be "auth" with a jwt
+                            if is_browser_connection and not browser_connection_authenticated:
+                                if not (ws_msg.get("auth") and await self.core_connection_auth(ws_msg.get("auth"))):
+                                    return await websocket.close(
+                                        code=1003,
+                                        reason="Authentication failed. Invalid JWT on first connection message.",
+                                    )
+                                browser_connection_authenticated = True
+                                await websocket.send_json({"type": "browser_connection_authenticated"})
+                                continue
+
                             # validate msg
                             # if invalid, log and send error msg to client, else put
                             if ws_msg.get("type") == "ping":

@@ -3,7 +3,7 @@ import os
 from fastapi.middleware.cors import CORSMiddleware
 
 
-def authenticate_function(_jwt: str):
+async def authenticate_function(jwt: str | None) -> bool:
     return True
 
 
