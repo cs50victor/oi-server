@@ -15,6 +15,7 @@ import os
 import uvicorn
 import asyncio
 
+print('----------- ❄️" -------------')
 
 # FOR READER: file class structure for easy skimming
 # also cool read / side not: - python threading side note: https://stackoverflow.com/questions/11431637/how-can-i-kill-a-thread-in-python
