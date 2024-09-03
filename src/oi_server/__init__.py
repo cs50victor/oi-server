@@ -31,10 +31,12 @@ class RunCode(TypedDict):
     code: str
 
 
+# should maybe be an enum
 class LMC(BaseModel):
-    id: Optional[str] = str(datetime.now().timestamp())
     role: Literal["user", "assistant", "computer", "server"]
-    type: Optional[Literal["message", "console", "command", "status", "image", "code", "audio", "error"]]
+    type: Optional[
+        Literal["message", "console", "command", "status", "image", "code", "audio", "error", "confirmation"]
+    ] = None
     format: Optional[
         Literal[
             "active_line",
@@ -65,15 +67,21 @@ class LMC(BaseModel):
         return v
 
     @field_validator("start")
-    def start_must_be_true(cls, start: bool):
+    @classmethod
+    def start_must_be_true(cls, start: bool, info: ValidationInfo):
         if not start:
             raise ValueError("start must be true in LCM message")
+        if info.data.get("content") is not None:
+            raise ValueError("content must be None in LCM message if start chunk")
         return start
 
     @field_validator("end")
-    def end_must_be_true(cls, end: bool):
+    @classmethod
+    def end_must_be_true(cls, end: bool, info: ValidationInfo):
         if not end:
             raise ValueError("end must be true in LCM message")
+        if info.data.get("content") is not None:
+            raise ValueError("content must be None in LCM message if end chunk")
         return end
 
 
@@ -114,15 +122,19 @@ class ServerInterpreter(OpenInterpreter):
         self.print = False  # Will print output
 
     async def output(self):
-        # If queue is empty, wait until an item is available.
-        return await self.output_queue.get()
+        try:
+            return await self.output_queue.get()
+        except asyncio.CancelledError as e:
+            print("async queue cancel error exception ", e)
+        except Exception as e:
+            print("async queue exception ", e)
 
     # TODO: protential bug here, test later
     def not_similar_to_last(self, lmc_message: LMC) -> bool:
         if len(self.messages) == 0:  # type: ignore
             return False
         last_msg: Any = self.messages[-1]  # type: ignore
-        return lmc_message.type != last_msg.get("type") or lmc_message.format != last_msg.get("format")
+        return lmc_message.type != last_msg.type or lmc_message.format != last_msg.format
 
     def response_complete_lmc(self) -> LMC:
         return LMC(role="server", type="status", content="complete")
@@ -142,6 +154,7 @@ class ServerInterpreter(OpenInterpreter):
             return
 
         # possible logical bug in this code block below
+        #
         curr_msg_is_similar_to_prev = self.not_similar_to_last(message.inner)
         if message.inner.start or curr_msg_is_similar_to_prev:
             curr_msg = message.inner
@@ -210,6 +223,7 @@ class OIServer:
             ws_max_queue=_ws_max_msg_queue,
             ws_ping_interval=_ws_ping_interval_in_secs,
             log_level=self.log_level,
+            timeout_graceful_shutdown=2,
         )
 
     @property
@@ -399,6 +413,10 @@ class ServerRoutes:
                     async for ws_msg in websocket.iter_json():
                         self.logger.info(f"received message from client: {ws_msg}")
                         try:
+                            if ws_msg.get("type") == "ping":
+                                await websocket.send_json({"type": "pong"})
+                                continue
+
                             # first message after connection for browser clients should be "auth" with a jwt
                             if is_browser_connection and not browser_connection_authenticated:
                                 if not (ws_msg.get("auth") and await self.core_connection_auth(ws_msg.get("auth"))):
@@ -412,9 +430,6 @@ class ServerRoutes:
 
                             # validate msg
                             # if invalid, log and send error msg to client, else put
-                            if ws_msg.get("type") == "ping":
-                                await websocket.send_json({"type": "pong"})
-                                continue
                             inner_msg = LMC(**ws_msg)
                             client_msg = ClientMsg(inner=inner_msg)
                             msg_queue.put_nowait(client_msg)
@@ -431,10 +446,14 @@ class ServerRoutes:
             while websocket.client_state == WebSocketState.CONNECTED:
                 try:
                     output = await self.server_interpreter.output()
+                    if output is None:
+                        await websocket.close(code=1001, reason="Interpreter closed the connection")
+                        break
                     if isinstance(output, LMC):
                         await websocket.send_json(output.model_dump(exclude_none=True))
                     else:
                         await websocket.send_bytes(output)
+                    self.server_interpreter.output_queue.task_done()
                 except Exception as e:
                     self.logger.error(f"Error sending output to client: {e}")
 
@@ -478,7 +497,14 @@ class ServerRoutes:
                     self.interpreter_task.cancel()
                 self.interpreter_task = client_msg_to_task(client_msg)
 
-        await asyncio.gather(receive_msg_from_client(), process_client_msg(), send_response_to_client())
+        try:
+            await asyncio.gather(receive_msg_from_client(), process_client_msg(), send_response_to_client())
+        except Exception as e:
+            self.logger.error(f"Error in websocket connection: {e}")
+        finally:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.close()
+            self.logger.info("WebSocket connection closed")
 
     # https://github.com/fastapi/fastapi/discussions/9062
     # https://python.plainenglish.io/file-uploads-and-downloads-in-fastapi-a-comprehensive-guide-06e0b18bb245
@@ -506,9 +532,10 @@ class ServerRoutes:
 
 
 def start_blocking_response_logic(interpreter: ServerInterpreter, logger: logging.Logger):
-    # we got an end chunk
     if not interpreter.messages:
         return
+
+    # we got an end chunk
 
     last_msg = interpreter.messages[-1]
     # TODO: run_code logic might have a bug, double check
@@ -521,14 +548,21 @@ def start_blocking_response_logic(interpreter: ServerInterpreter, logger: loggin
 
     # TODO: _ means private, maybe change in core?
     # this should return a generator of LMC chunks
+    # change the messages to dicts
+    # TODO: optimize later
+    interpreter.messages = [msg.model_dump(exclude_none=True, exclude_defaults=True) for msg in interpreter.messages]  # type: ignore
+    # this is a hack to remove the first message, remove later. not having this cause an uncaught exception
+    interpreter.messages.pop(0)
+    # print("msgs refined", interpreter.messages)
     for chunk_og in interpreter._respond_and_store():  # type: ignore
+        print("chunk", chunk_og)
         chunk: Dict[str, Any] = chunk_og.copy()
         try:
             lmc_chunk = LMC(**chunk)
         except Exception as e:
             logger.error(f"Error parsing LMC chunk produced by interpreter-core: {chunk} | {e}")
             continue
-        if chunk.get("type") == "confirmation":
+        if lmc_chunk.type == "confirmation":
             if not run_code:
                 break
             run_code = False
@@ -541,7 +575,7 @@ def start_blocking_response_logic(interpreter: ServerInterpreter, logger: loggin
             if lmc_chunk.type in ["code", "console"] and lmc_chunk.format:
                 if lmc_chunk.start:
                     print(
-                        "\n------------\n\n```" + chunk["format"],
+                        "\n------------\n\n```" + lmc_chunk.format,
                         flush=True,
                     )
                 if lmc_chunk.end:
